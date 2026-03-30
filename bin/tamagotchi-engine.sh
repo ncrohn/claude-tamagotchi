@@ -192,8 +192,8 @@ engine_apply_neglect() {
 
   local days_inactive=$(( (now_epoch - last_epoch) / 86400 ))
 
-  if [ "$days_inactive" -gt 2 ]; then
-    local decay=$(( (days_inactive - 2) * 5 ))
+  if [ "$days_inactive" -gt 1 ]; then
+    local decay=$(( (days_inactive - 1) * 3 ))
     local current_hp
     current_hp=$(echo "$state" | jq -r '.creature.hp')
     local new_hp=$(( current_hp - decay ))
