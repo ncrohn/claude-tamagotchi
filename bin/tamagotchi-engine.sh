@@ -302,7 +302,7 @@ engine_award_xp() {
 
   # Check for level-ups (can gain multiple levels)
   while true; do
-    local threshold=$(( new_level * 50 ))
+    local threshold=$(( 40 + new_level * 20 ))
     if [ $new_xp -ge $threshold ]; then
       new_xp=$(( new_xp - threshold ))
       new_level=$(( new_level + 1 ))
