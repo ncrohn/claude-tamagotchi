@@ -97,9 +97,17 @@ render() {
   local bg_color
   bg_color=$(hex_to_bg "$COLOR_BG1")
 
-  # Format: 🐥 Chip ▰▰▰▰▱▱ ⬆3
+  # Check for egg
+  local egg_part=""
+  local has_egg
+  has_egg=$(echo "$state" | jq -r '.egg // empty')
+  if [ -n "$has_egg" ] && [ "$has_egg" != "null" ]; then
+    egg_part=" 🥚"
+  fi
+
+  # Format: 🐥 Chip ▰▰▰▰▱▱ ⬆3  (or 🦅 Chip ▰▰▰▰▰▰ ⬆5 🥚)
   local segment
-  segment="${bg_color} ${emoji} ${fg}${BOLD}${name}${RESET}${bg_color} ${fg}${bar}${RESET}${bg_color} ${fg}⬆${level}${RESET}${bg_color} ${RESET}"
+  segment="${bg_color} ${emoji} ${fg}${BOLD}${name}${RESET}${bg_color} ${fg}${bar}${RESET}${bg_color} ${fg}⬆${level}${RESET}${bg_color}${egg_part} ${RESET}"
 
   printf "%b" "$segment"
 }

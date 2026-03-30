@@ -262,6 +262,13 @@ engine_reset_session() {
   engine_write_state "$state"
 }
 
+engine_increment_session_turns() {
+  local state
+  state=$(engine_read_state)
+  state=$(echo "$state" | jq '.session.turns = (.session.turns + 1)')
+  engine_write_state "$state"
+}
+
 engine_increment_session_errors() {
   local state
   state=$(engine_read_state)
@@ -286,11 +293,13 @@ engine_award_xp() {
   turns=$(echo "$state" | jq -r '.session.turns // 0')
   tool_calls=$(echo "$state" | jq -r '.session.tool_calls // 0')
 
-  # XP formula: base(10) + min(turns, 20) * 2 + min(tool_calls, 30), cap 100
-  local capped_turns=$(( turns > 20 ? 20 : turns ))
-  local capped_tools=$(( tool_calls > 30 ? 30 : tool_calls ))
-  local xp_earned=$(( 10 + capped_turns * 2 + capped_tools ))
-  [ $xp_earned -gt 100 ] && xp_earned=100
+  # XP formula: base(5) + min(turns, 15) * 2 + tool_calls/5 (cap 10), cap 50
+  # Turns = user messages (slow), tool_calls = all tool uses (fast, needs scaling)
+  local capped_turns=$(( turns > 15 ? 15 : turns ))
+  local scaled_tools=$(( tool_calls / 5 ))
+  local capped_tools=$(( scaled_tools > 10 ? 10 : scaled_tools ))
+  local xp_earned=$(( 5 + capped_turns * 2 + capped_tools ))
+  [ $xp_earned -gt 50 ] && xp_earned=50
 
   local current_xp current_level
   current_xp=$(echo "$state" | jq -r '.creature.xp')
@@ -411,9 +420,46 @@ engine_check_death() {
     ')
     engine_write_state "$state"
 
-    # Hatch new creature with inheritance
+    # If an egg already exists (died during coexistence), promote it with death bonus
+    local existing_egg
+    existing_egg=$(echo "$state" | jq -r '.egg // empty')
     local new_name
-    new_name=$(engine_create_creature_with_inheritance "$level")
+    if [ -n "$existing_egg" ] && [ "$existing_egg" != "null" ]; then
+      local egg_name egg_theme
+      egg_name=$(echo "$state" | jq -r '.egg.name')
+      egg_theme=$(echo "$state" | jq -r '.egg.theme')
+      local bonus_xp=$(( level * 2 ))
+      local now
+      now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+      state=$(engine_read_state)
+      state=$(echo "$state" | jq \
+        --arg name "$egg_name" \
+        --arg theme "$egg_theme" \
+        --arg now "$now" \
+        --argjson max_hp 85 \
+        --argjson bonus_xp "$bonus_xp" '
+        .creature = {
+          name: $name,
+          level: 1,
+          xp: $bonus_xp,
+          hp: 85,
+          max_hp: 85,
+          mood: "happy",
+          theme: $theme,
+          born: $now,
+          last_session: $now,
+          streak_days: 0,
+          total_sessions: 0,
+          sessions_at_max: 0
+        } |
+        del(.egg)
+      ')
+      engine_write_state "$state"
+      new_name="$egg_name"
+    else
+      new_name=$(engine_create_creature_with_inheritance "$level")
+    fi
 
     local emoji
     emoji=$(engine_get_emoji "$(engine_get_field "$(engine_read_state)" '.creature.theme')" 1)
@@ -422,6 +468,158 @@ engine_check_death() {
     return 0
   fi
   return 1
+}
+
+# --- Egg-laying & retirement ---
+
+engine_check_egg_laying() {
+  local state
+  state=$(engine_read_state)
+
+  # Skip if already has an egg
+  local has_egg
+  has_egg=$(echo "$state" | jq -r '.egg // empty')
+  if [ -n "$has_egg" ] && [ "$has_egg" != "null" ]; then
+    return 1
+  fi
+
+  local level sessions_at_max
+  level=$(echo "$state" | jq -r '.creature.level')
+  sessions_at_max=$(echo "$state" | jq -r '.creature.sessions_at_max // 0')
+
+  # Must be level 5 with 3+ sessions at that level
+  if [ "$level" -ge 5 ]; then
+    if [ "$sessions_at_max" -ge 3 ]; then
+      # Lay the egg
+      local egg_theme egg_name now
+      egg_theme=$(engine_pick_random_theme)
+      egg_name=$(engine_generate_name "$state")
+      now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+      state=$(echo "$state" | jq \
+        --arg name "$egg_name" \
+        --arg theme "$egg_theme" \
+        --arg now "$now" '
+        .egg = {
+          name: $name,
+          theme: $theme,
+          created: $now,
+          sessions_remaining: 2
+        }
+      ')
+      engine_write_state "$state"
+
+      local parent_name
+      parent_name=$(engine_get_field "$state" '.creature.name')
+      echo "EGG_LAID:${parent_name}:${egg_name}"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+engine_track_sessions_at_max() {
+  local state
+  state=$(engine_read_state)
+
+  local level
+  level=$(echo "$state" | jq -r '.creature.level')
+
+  if [ "$level" -ge 5 ]; then
+    local current
+    current=$(echo "$state" | jq -r '.creature.sessions_at_max // 0')
+    state=$(echo "$state" | jq --argjson s "$(( current + 1 ))" '.creature.sessions_at_max = $s')
+  else
+    state=$(echo "$state" | jq '.creature.sessions_at_max = 0')
+  fi
+
+  engine_write_state "$state"
+}
+
+engine_check_retirement() {
+  local state
+  state=$(engine_read_state)
+
+  local egg
+  egg=$(echo "$state" | jq -r '.egg // empty')
+  if [ -z "$egg" ] || [ "$egg" = "null" ]; then
+    return 1
+  fi
+
+  local remaining
+  remaining=$(echo "$state" | jq -r '.egg.sessions_remaining')
+
+  if [ "$remaining" -le 0 ]; then
+    # Retire the parent
+    local name level born total_sessions
+    name=$(engine_get_field "$state" '.creature.name')
+    level=$(echo "$state" | jq -r '.creature.level')
+    born=$(engine_get_field "$state" '.creature.born')
+    total_sessions=$(echo "$state" | jq -r '.creature.total_sessions')
+
+    local today
+    today=$(date -u +"%Y-%m-%d")
+    local born_date
+    born_date=$(echo "$born" | cut -dT -f1)
+
+    # Add to lineage as retired
+    state=$(echo "$state" | jq \
+      --arg name "$name" \
+      --argjson level "$level" \
+      --arg born "$born_date" \
+      --arg retired "$today" \
+      --argjson sessions "$total_sessions" '
+      .lineage += [{
+        name: $name,
+        level: $level,
+        born: $born,
+        died: $retired,
+        cause: "retired",
+        sessions: $sessions
+      }]
+    ')
+
+    # Promote egg to creature with retirement bonus
+    local egg_name egg_theme
+    egg_name=$(echo "$state" | jq -r '.egg.name')
+    egg_theme=$(echo "$state" | jq -r '.egg.theme')
+    local bonus_xp=$(( level * 3 + (total_sessions > 10 ? 10 : total_sessions) ))
+    local now
+    now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local max_hp=85
+
+    state=$(echo "$state" | jq \
+      --arg name "$egg_name" \
+      --arg theme "$egg_theme" \
+      --arg now "$now" \
+      --argjson max_hp "$max_hp" \
+      --argjson bonus_xp "$bonus_xp" '
+      .creature = {
+        name: $name,
+        level: 1,
+        xp: $bonus_xp,
+        hp: $max_hp,
+        max_hp: $max_hp,
+        mood: "happy",
+        theme: $theme,
+        born: $now,
+        last_session: $now,
+        streak_days: 0,
+        total_sessions: 0,
+        sessions_at_max: 0
+      } |
+      del(.egg)
+    ')
+
+    engine_write_state "$state"
+    echo "RETIRED:${name}:${level}:${egg_name}"
+    return 0
+  else
+    # Decrement remaining sessions
+    state=$(echo "$state" | jq '.egg.sessions_remaining = (.egg.sessions_remaining - 1)')
+    engine_write_state "$state"
+    return 1
+  fi
 }
 
 # --- Mood ---

@@ -11,13 +11,13 @@ fi
 # Read hook input
 INPUT=$(cat)
 
-# Check exit code
-EXIT_CODE=$(echo "$INPUT" | jq -r '.tool_result.exit_code // 0' 2>/dev/null)
+# Check exit code (only Bash tool has exit_code/stderr)
+EXIT_CODE=$(echo "$INPUT" | jq -r '.tool_result.exit_code // empty' 2>/dev/null)
 STDERR=$(echo "$INPUT" | jq -r '.tool_result.stderr // empty' 2>/dev/null)
 
 source "$TAMAGOTCHI_DIR/bin/tamagotchi-engine.sh"
 
-if [[ "$EXIT_CODE" != "0" && "$EXIT_CODE" != "null" ]] || [[ -n "$STDERR" ]]; then
+if [[ -n "$EXIT_CODE" && "$EXIT_CODE" != "0" ]] || [[ -n "$STDERR" ]]; then
   engine_increment_session_errors
 else
   engine_increment_session_tool_calls
