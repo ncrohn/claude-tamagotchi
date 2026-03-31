@@ -13,13 +13,13 @@ A persistent Tamagotchi creature that lives in your Claude Code status line. It 
 First, add the marketplace:
 
 ```bash
-/plugin marketplace add ncrohn/claude-plugins
+/plugin marketplace add ncrohn/ncrohn-plugins
 ```
 
 Then install the plugin:
 
 ```bash
-/plugin install claude-tamagotchi@claude-plugins
+/plugin install claude-tamagotchi@ncrohn-plugins
 ```
 
 On your next session, a creature will hatch automatically with a random name and theme. You won't know what it is until Level 2 — every creature starts as an egg.
