@@ -1,16 +1,13 @@
 {
   "name": "claude-tamagotchi",
-  "description": "A persistent Tamagotchi creature that lives in your Claude Code status line — evolves, has moods, and can die from neglect",
+  "description": "A persistent Tamagotchi creature that lives in your Claude Code status line",
   "version": "0.1.0",
   "author": {
-    "name": "Nick"
+    "name": "ncrohn"
   },
-  "repository": "https://github.com/nick/claude-tamagotchi",
-  "license": "MIT",
   "keywords": [
     "tamagotchi",
     "status-line",
-    "pet",
-    "gamification"
+    "fun"
   ]
 }
